@@ -1,0 +1,117 @@
+<!doctype html>
+<html lang="es">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Comercio exterior · demo con datos ficticios</title>
+  <link rel="stylesheet" href="/static/estilos.css">
+</head>
+<body>
+  <header class="cabecera">
+    <div>
+      <h1>Comercio exterior</h1>
+      <p class="sub">Demostración de análisis y BI · <strong>datos 100 % ficticios</strong> · 2018–2025</p>
+    </div>
+    <nav class="pestanas" role="tablist" aria-label="Secciones">
+      <button role="tab" data-tab="resumen" id="tab-resumen" aria-selected="true">Resumen</button>
+      <button role="tab" data-tab="detalle" id="tab-detalle" aria-selected="false">Detalle</button>
+      <button role="tab" data-tab="calidad" id="tab-calidad" aria-selected="false">Calidad de datos</button>
+      <button role="tab" data-tab="ingestas" id="tab-ingestas" aria-selected="false">Ingestas</button>
+    </nav>
+  </header>
+
+  <div id="aviso" class="aviso" role="alert" hidden></div>
+
+  <section id="filtros" class="filtros" aria-label="Filtros">
+    <label>Desde <input type="month" id="f-desde" min="2018-01" max="2025-12" value="2018-01"></label>
+    <label>Hasta <input type="month" id="f-hasta" min="2018-01" max="2025-12" value="2025-12"></label>
+    <div id="f-pais"></div><div id="f-sector"></div><div id="f-subsector"></div><div id="f-producto"></div>
+    <button id="f-limpiar" type="button" class="secundario">Limpiar filtros</button>
+  </section>
+
+  <main>
+    <section id="vista-resumen" class="vista">
+      <div class="kpis" id="kpis" aria-live="polite"></div>
+      <div class="rejilla">
+        <article class="tarjeta ancha">
+          <header><h2>Evolución mensual</h2>
+            <div class="controles">
+              <label>Vista <select id="serie-modo"><option value="mensual">Mensual</option><option value="acumulado">Acumulado del año</option></select></label>
+            </div></header>
+          <div id="grafico-serie" class="grafico" data-testid="grafico-serie"></div>
+          <div id="grafico-saldo" class="grafico bajo" data-testid="grafico-saldo"></div>
+        </article>
+        <article class="tarjeta">
+          <header><h2>Resultado anual</h2></header>
+          <div id="grafico-anual" class="grafico" data-testid="grafico-anual"></div>
+          <div id="tabla-anual"></div>
+        </article>
+        <article class="tarjeta">
+          <header><h2>Top N + «Resto»</h2>
+            <div class="controles">
+              <select id="top-dim" aria-label="Dimensión"></select>
+              <select id="top-medida" aria-label="Medida"></select>
+              <select id="top-n" aria-label="N"><option>5</option><option selected>10</option><option>15</option><option>20</option></select>
+            </div></header>
+          <div id="grafico-top" class="grafico" data-testid="grafico-top"></div>
+          <p id="top-total" class="nota"></p>
+        </article>
+        <article class="tarjeta">
+          <header><h2>Contribución al crecimiento</h2>
+            <p class="nota">Puntos porcentuales sobre la variación interanual del total</p></header>
+          <div id="grafico-contrib" class="grafico" data-testid="grafico-contrib"></div>
+          <p id="contrib-total" class="nota"></p>
+        </article>
+      </div>
+    </section>
+
+    <section id="vista-detalle" class="vista" hidden>
+      <article class="tarjeta">
+        <header><h2>Tabla por dimensión</h2>
+          <div class="controles">
+            <label>Agrupar por <select id="tabla-dim"></select></label>
+            <label>Filas <select id="tabla-tamano"><option>10</option><option selected>25</option><option>50</option><option>100</option></select></label>
+            <a id="btn-exportar" class="boton" href="#" data-testid="btn-exportar" download>Exportar CSV</a>
+          </div></header>
+        <div class="tabla-envoltorio"><table id="tabla-datos" data-testid="tabla-datos"></table></div>
+        <nav class="paginacion" aria-label="Paginación">
+          <button id="pag-ant" type="button" class="secundario">‹ Anterior</button>
+          <span id="pag-info" aria-live="polite"></span>
+          <button id="pag-sig" type="button" class="secundario">Siguiente ›</button>
+        </nav>
+      </article>
+      <article class="tarjeta">
+        <header><h2>Ranking anual</h2>
+          <div class="controles"><select id="rank-dim" aria-label="Dimensión"></select></div></header>
+        <div class="tabla-envoltorio"><table id="tabla-ranking" data-testid="tabla-ranking"></table></div>
+      </article>
+    </section>
+
+    <section id="vista-calidad" class="vista" hidden>
+      <div class="kpis" id="calidad-kpis"></div>
+      <article class="tarjeta"><header><h2>Controles de calidad</h2></header>
+        <div class="tabla-envoltorio"><table id="tabla-checks" data-testid="tabla-checks"></table></div></article>
+      <div class="rejilla">
+        <article class="tarjeta"><header><h2>Conservación de filas</h2></header><div id="conservacion"></div></article>
+        <article class="tarjeta"><header><h2>Rechazos y descartes por motivo</h2></header><div id="motivos"></div></article>
+      </div>
+      <article class="tarjeta"><header><h2>Registros rechazados</h2>
+        <div class="controles"><select id="rech-motivo" aria-label="Motivo"><option value="">Todos los motivos</option></select></div></header>
+        <div class="tabla-envoltorio"><table id="tabla-rechazados" data-testid="tabla-rechazados"></table></div>
+        <nav class="paginacion"><button id="rech-ant" type="button" class="secundario">‹ Anterior</button>
+          <span id="rech-info"></span><button id="rech-sig" type="button" class="secundario">Siguiente ›</button></nav>
+      </article>
+    </section>
+
+    <section id="vista-ingestas" class="vista" hidden>
+      <div class="kpis" id="ingestas-kpis"></div>
+      <article class="tarjeta"><header><h2>Seguimiento de ingestas</h2>
+        <p class="nota">Una ingesta ya cargada se omite: la carga es idempotente.</p></header>
+        <div class="tabla-envoltorio"><table id="tabla-ingestas" data-testid="tabla-ingestas"></table></div></article>
+      <article class="tarjeta" id="detalle-ingesta" hidden><header><h2 id="detalle-titulo"></h2></header><div id="detalle-cuerpo"></div></article>
+    </section>
+  </main>
+  <footer class="pie">Datos generados artificialmente. Ninguna cifra corresponde a estadísticas reales.</footer>
+  <script src="/static/app.js"></script>
+</body>
+</html>
