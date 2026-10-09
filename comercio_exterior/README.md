@@ -1,29 +1,13 @@
-# Análisis de comercio exterior — demo para Databricks (datos ficticios)
+# Comercio exterior · aplicación de demostración de análisis de datos y BI
 
-Proyecto de demostración con Python y SQL: genera 50.000 registros ficticios de exportaciones e importaciones (2022–2025) por país, producto y sector, los valida y calcula métricas de comercio exterior con SQL.
+Aplicación completa, en local y con **datos 100 % ficticios**, que cubre el recorrido de un proyecto de datos:
+generación de **1 millón de operaciones** (2018–2025, 50 países, 200 productos, sectores en dos niveles) → **lakehouse Parquet bronze/silver/gold** con cargas incrementales, duplicados, correcciones y registros inválidos → **motor analítico** con SQL ejecutable en DuckDB y versión compatible con Databricks → **API FastAPI** y **interfaz web** con indicadores, gráficos, tablas, filtros y exportación CSV, más pantallas de **calidad de datos** y **seguimiento de ingestas**.
 
-> **Todos los datos son inventados.** Los nombres de países son solo etiquetas; los importes, pesos y fechas no proceden de ninguna estadística real. El proyecto no usa servicios externos ni credenciales.
+No usa servicios externos, de pago ni credenciales.
 
-## Estructura
+![Resumen](docs/capturas/01_resumen.png)
 
-```
-comercio_exterior/
-├── src/comercio_exterior/
-│   ├── generador.py      # Genera los 50.000 registros (reproducible con semilla)
-│   ├── consultas.py      # Carga las plantillas SQL y las ejecuta (SQLite local)
-│   ├── validaciones.py   # Calidad de datos y coherencia de totales
-│   └── demo.py           # Ejecución completa local
-├── sql/                  # Consultas (válidas en SQLite y Spark SQL / Databricks)
-│   ├── 01_metricas_anuales.sql
-│   ├── 02_variacion_interanual.sql
-│   ├── 03_top_paises.sql
-│   └── 04_metricas_por_sector.sql
-├── notebooks/demo_databricks.py   # Notebook de Databricks (formato fuente)
-├── scripts/verificar_spark_local.py   # Opcional: contrasta SQL en Spark vs SQLite
-└── tests/                # Pruebas con pytest
-```
-
-## Cómo ejecutarlo en local
+## Puesta en marcha
 
 Requiere Python ≥ 3.10.
 
@@ -31,74 +15,74 @@ Requiere Python ≥ 3.10.
 cd comercio_exterior
 pip install -r requirements.txt
 
-python -m pytest                              # 56 pruebas
-PYTHONPATH=src python -m comercio_exterior.demo   # genera, valida y muestra las métricas
-PYTHONPATH=src python -m comercio_exterior.generador --salida datos/comercio_exterior.csv   # solo el CSV
+# 1. Construir el lakehouse (≈ 90 s, genera ~62 MB en datos/lakehouse; ejecutarlo de nuevo no duplica nada)
+PYTHONPATH=src python -m comercio_exterior.cli construir
+
+# 2. Arrancar la API y la interfaz
+PYTHONPATH=src python -m comercio_exterior.cli servir        # http://127.0.0.1:8000  ·  docs en /docs
 ```
 
-`demo` termina con código de salida 1 si alguna validación falla.
+Opciones útiles de `construir`: `--n 200000` (menos operaciones), `--entregas 28` y después `--desde-entrega 29` (carga incremental en dos tandas), `--particion anio`, `--limpiar`, `--guardar-verdad`.
+Otros comandos: `exportar-sql` (regenera `sql/databricks/`).
 
-## Cómo ejecutarlo en Databricks
+### Pruebas
 
-1. Importa el repositorio como *Git folder* (o copia la carpeta `comercio_exterior`).
-2. Abre `notebooks/demo_databricks.py` y ejecútalo en un clúster o *serverless*.
-3. Ajusta los widgets `catalogo` y `esquema` (por defecto `main.comercio_exterior_demo`). El notebook crea la tabla Delta `<catalogo>.<esquema>.comercio`, ejecuta las validaciones y muestra las cuatro consultas con `display()`.
+```bash
+python -m pytest                     # 341 pruebas, ~85 s (usa un lakehouse de 60.000 operaciones que construye solo)
+python -m pytest -m "not e2e"        # sin las pruebas con navegador
+```
 
-Necesitas permiso para crear esquemas/tablas en el catálogo elegido.
+Las pruebas E2E usan Playwright y Chromium (se omiten si no están disponibles; con un Chromium ya instalado se localiza en `/opt/pw-browsers/chromium`).
+Otros controles opcionales: `PYTHONPATH=src python scripts/benchmark.py` (rendimiento) y, con `pip install pyspark` y Java, `scripts/verificar_databricks_sql_spark.py` (SQL de Databricks en Spark local).
 
-## Datos
+## Estructura
 
-Tabla `comercio` (una fila por operación):
+```
+comercio_exterior/
+├── src/comercio_exterior/
+│   ├── catalogos.py          # 50 países, 200 productos, jerarquía de sectores, calendario
+│   ├── simulacion.py         # 1 M de operaciones y entregas con duplicados, correcciones e inválidos
+│   ├── lakehouse/            # pipeline bronze→silver→gold, registro de ingestas, calidad
+│   ├── analitica/            # filtros validados, plantillas SQL, motor DuckDB, exportación a Databricks
+│   ├── api/app.py            # FastAPI
+│   ├── web/static/           # interfaz (HTML + JS + CSS, sin dependencias externas)
+│   └── cli.py
+├── sql/analitica/            # consultas (plantillas portables)      ├── sql/databricks/   # versión Databricks generada
+├── notebooks/                # Databricks (no ejecutados en un workspace real)
+├── scripts/                  # benchmark y verificación en Spark
+├── tests/                    # unitarias, integración, referencia independiente, API, E2E
+└── docs/                     # arquitectura, modelo de datos, métricas, API, Databricks, BI, rendimiento
+```
 
-| Columna | Descripción |
+El directorio también conserva la **demostración original** (50.000 registros): `generador.py`, `consultas.py`, `validaciones.py`, `demo.py`, `sql/0*.sql` y `notebooks/demo_databricks.py`.
+
+## Documentación
+
+| Documento | Contenido |
 |---|---|
-| `id_registro` | Identificador único |
-| `fecha`, `anio` | Fecha de la operación y su año (2022–2025) |
-| `pais` | 30 países |
-| `sector`, `producto` | 8 sectores × 5 productos |
-| `flujo` | `EXPORTACION` o `IMPORTACION` |
-| `importe_eur` | Importe en euros |
-| `peso_kg` | Peso en kilogramos |
+| [`docs/arquitectura.md`](docs/arquitectura.md) | capas, ingestas, idempotencia, tratamiento de duplicados/correcciones/rechazos, trazabilidad, decisiones y límites |
+| [`docs/modelo_de_datos.md`](docs/modelo_de_datos.md) | catálogos, esquemas de bronze/silver/gold y control |
+| [`docs/metricas.md`](docs/metricas.md) | fórmulas (saldo, cobertura, interanual, acumulados, cuotas, ranking, Top N + Resto, contribución) y casos límite |
+| [`docs/api.md`](docs/api.md) | endpoints, filtros, errores y ejemplos |
+| [`docs/databricks.md`](docs/databricks.md) | cómo trasladar las consultas; qué está probado |
+| [`docs/bi.md`](docs/bi.md) | Power BI y Report Builder; **probado vs propuesto** |
+| [`docs/rendimiento.md`](docs/rendimiento.md) | benchmarks sobre 1 M de filas, cuellos de botella y mejoras |
 
-Con la semilla por defecto (42) el resultado es siempre el mismo.
+## Qué se ha verificado
 
-## Métricas
-
-Los importes están en euros. Todas las divisiones usan `NULLIF(denominador, 0)`: si el denominador es cero el resultado es `NULL` (no un error ni un infinito).
-
-| Métrica | Definición | Notas |
-|---|---|---|
-| **Exportaciones** | Suma de `importe_eur` con flujo `EXPORTACION` | |
-| **Importaciones** | Suma de `importe_eur` con flujo `IMPORTACION` | |
-| **Saldo comercial** | Exportaciones − Importaciones | Positivo = superávit; negativo = déficit |
-| **Tasa de cobertura** | Exportaciones / Importaciones × 100 | 100 % = equilibrio; >100 % las exportaciones cubren las importaciones. `NULL` si no hay importaciones |
-| **Variación interanual** | (Valor del año − valor del año anterior) / valor del año anterior × 100 | Calculada para exportaciones, importaciones y comercio total (exp. + imp.). `NULL` si falta el año anterior, no tiene datos o vale 0 |
-| **Variación del saldo** | Saldo del año − saldo del año anterior (en euros) | Es absoluta: un porcentaje sobre un saldo negativo o cercano a cero sería engañoso |
-| **Top 10 países** | Los 10 países con mayor comercio total (exp. + imp.) de cada año | Incluye saldo, cobertura y `cuota_pct` (peso sobre el comercio total del año). Los empates se desempatan por nombre |
-
-**Años sin datos.** Las consultas parten de un calendario explícito de años (`ANIOS`, por defecto 2022–2025). Un año del calendario sin registros aparece con `num_registros = 0` y métricas `NULL`, que no es lo mismo que «0 euros». La variación interanual compara siempre con el año inmediatamente anterior: si ese año no tiene datos, la variación es `NULL` (no se compara con el último año disponible).
-
-## Validaciones (`validaciones.py`)
-
-Se hacen sobre un DataFrame de pandas, así que funcionan igual en local y en Databricks.
-
-**Calidad** (`validar_calidad`): esquema completo; `id_registro` sin duplicados; sin filas idénticas salvo el id; sin nulos ni textos vacíos en ninguna columna; sin importes ni pesos negativos (un importe 0 es válido); `flujo` solo con valores permitidos; `anio` coincide con el año de `fecha`; todos los años esperados tienen datos.
-
-**Coherencia de totales** (`validar_coherencia`): los totales anuales calculados por SQL coinciden con un recálculo independiente en pandas; saldo = exportaciones − importaciones y cobertura = exp./imp.×100; la suma de los años iguala el total general; la suma agrupada por país, producto y sector iguala el total (detecta filas con clave nula que se perderían); el ranking de países está ordenado y no supera el total del año.
-
-## Pruebas (`tests/`)
-
-- **Generador**: 50.000 registros, esquema, años, flujos, sector↔producto, sin nulos/duplicados/negativos, reproducibilidad.
-- **Consultas** con datos mínimos calculados a mano: exportaciones, importaciones, saldo (positivo y negativo), cobertura, **división por cero** (importaciones = 0, base interanual = 0, comercio total = 0), **años sin datos** (año final, año intermedio, tabla vacía), top N (menos de 10 países, empates, independencia por año, cuotas que suman 100 %) y validación de parámetros.
-- **Validaciones**: un caso que falla por cada comprobación, más totales manipulados a propósito.
-- **Estática**: toda división de los ficheros `.sql` debe ir protegida por `NULLIF`.
-
-### Por qué existe la prueba estática de `NULLIF`
-
-SQLite devuelve `NULL` al dividir por cero, pero Spark/Databricks en modo ANSI (el predeterminado en versiones recientes) lanza un error. Los tests en SQLite por sí solos no detectarían una división sin proteger, por eso se revisa el SQL de forma estática. Además, `scripts/verificar_spark_local.py` (opcional, requiere `pip install pyspark` y Java) ejecuta las mismas consultas en Spark local con ANSI activado y compara los resultados con SQLite, incluidos los casos límite.
+- **Resultados**: las métricas (resumen, series mensual/anual con acumulados e interanual, tablas por 5 dimensiones, Top N + Resto con 4 medidas, contribución, ranking) se contrastan con una **implementación independiente en pandas** (`tests/referencia.py`) calculada a partir de la verdad del simulador, con 11 combinaciones de filtros. Esa comparación detectó un fallo real (ventanas actual/previa solapadas en rangos de más de 12 meses) que está corregido.
+- **Invariantes**: Top N + «Resto» = total (4 medidas × 3 dimensiones × 3 valores de N × 2 sentidos); las contribuciones suman el crecimiento total; `bronze = silver + rechazados + descartes`; silver coincide exactamente con la verdad; gold coincide con una agregación independiente.
+- **Cargas incrementales**: idempotentes (la misma ingesta, o el mismo contenido con otro identificador, se omite), reanudables tras un fallo en cada paso, y el estado se reconstruye idéntico desde bronze.
+- **Casos límite**: división por cero, años y meses sin datos, saldos negativos, periodo previo vacío, filtros sin resultados, página fuera de rango.
+- **Aplicación**: API (47 pruebas: validación, paginación, ordenación, CSV, errores) y E2E con Chromium (filtros, URL restaurable, tabla ordenable/paginada, descarga CSV, calidad, ingestas, estados vacíos y errores). La inestabilidad de una prueba E2E descubrió una condición de carrera real en la interfaz, corregida.
+- **Databricks**: el SQL de `sql/databricks/` se ejecuta en Spark local con ANSI y coincide con DuckDB en 48 escenarios. **No** se ha probado en un workspace real.
+- **Power BI / Report Builder**: **no probados**; solo se verificó el formato de las respuestas (ver `docs/bi.md`).
 
 ## Limitaciones
 
-- El notebook de Databricks se ha probado simulando su lógica en Spark local, pero no en un workspace real.
-- `consultas.crear_conexion` usa SQLite en memoria: es solo para ejecución local y tests.
-- Los importes ficticios no están calibrados con ninguna fuente real.
+- Datos ficticios y simplificados: sin aranceles, divisas, series revisadas ni jerarquías reales; los importes están en `DOUBLE` con tolerancia de 0,01 €.
+- Filtros de fecha por mes (gold es mensual). La comparación interanual desplaza el rango 12 meses; con rangos de más de un año las ventanas se solapan (documentado en `docs/metricas.md`).
+- Un único escritor de ingestas (bloqueo por fichero); la API es de solo lectura, sin autenticación ni TLS: no exponerla fuera de local.
+- Las correcciones en periodos antiguos reescriben trimestres completos (*copy-on-write*), que es el mayor coste de la carga.
+- Rendimiento medido en una sola máquina de 4 vCPU; no hay pruebas de carga con muchos usuarios ni medidas en Databricks.
+- La interfaz usa `<input type="month">`, cuyo aspecto depende del idioma del navegador.

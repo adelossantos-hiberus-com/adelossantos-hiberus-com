@@ -9,6 +9,7 @@
           --aviso-fondo: #450a0a; --aviso-borde: #7f1d1d; }
 }
 * { box-sizing: border-box; }
+[hidden] { display: none !important; }
 body { margin: 0; background: var(--fondo); color: var(--texto); font: 14px/1.45 system-ui, "Segoe UI", sans-serif; }
 .cabecera { display: flex; flex-wrap: wrap; gap: 12px 24px; justify-content: space-between; align-items: center;
             padding: 14px 24px; background: var(--tarjeta); border-bottom: 1px solid var(--borde); }

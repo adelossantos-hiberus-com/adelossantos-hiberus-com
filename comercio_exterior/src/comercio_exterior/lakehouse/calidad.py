@@ -16,6 +16,11 @@ TOLERANCIA_REL = 1e-9
 TOLERANCIA_ABS = 0.01
 
 
+def _n(x) -> str:
+    """Entero con separador de miles español."""
+    return f"{int(x):,}".replace(",", ".")
+
+
 def _check(nombre: str, ok: bool, detalle: str, valor=None, capa: str = "") -> dict:
     return {"nombre": nombre, "capa": capa, "ok": bool(ok), "detalle": detalle, "valor": valor}
 
@@ -59,9 +64,9 @@ def informe_calidad(raiz: str | Path) -> dict:
     conservacion = {"bronze": n_bronze, "silver": n_silver, "rechazados": n_rech, "descartes": n_desc,
                     "diferencia": n_bronze - n_silver - n_rech - n_desc}
     checks.append(_check("conservacion_de_filas", conservacion["diferencia"] == 0,
-                         f"bronze {n_bronze:,} = silver {n_silver:,} + rechazados {n_rech:,} + descartes {n_desc:,}"
+                         f"bronze {_n(n_bronze)} = silver {_n(n_silver)} + rechazados {_n(n_rech)} + descartes {_n(n_desc)}"
                          if conservacion["diferencia"] == 0 else
-                         f"descuadre de {conservacion['diferencia']:,} filas entre bronze y silver+rechazados+descartes",
+                         f"descuadre de {_n(conservacion['diferencia'])} filas entre bronze y silver+rechazados+descartes",
                          conservacion["diferencia"], "bronze"))
 
     # ---- bronze: linaje completo
@@ -75,7 +80,7 @@ def informe_calidad(raiz: str | Path) -> dict:
     if ex["silver"]:
         def chk(nombre, sql, ok_txt, mal_txt, capa="silver"):
             n = q(sql)
-            checks.append(_check(nombre, n == 0, ok_txt if n == 0 else f"{n:,} {mal_txt}", n, capa))
+            checks.append(_check(nombre, n == 0, ok_txt if n == 0 else f"{_n(n)} {mal_txt}", n, capa))
         chk("silver_ids_unicos", f"SELECT count(*) - count(DISTINCT operacion_id) FROM {silver}",
             "una sola versión vigente por operación", "operaciones con más de una versión vigente")
         chk("silver_sin_nulos",
@@ -108,18 +113,18 @@ def informe_calidad(raiz: str | Path) -> dict:
         """).fetchone()
         d = max(dif[0] or 0, dif[1] or 0)
         checks.append(_check("gold_cuadra_con_silver", d <= TOLERANCIA_ABS,
-                             f"exportaciones e importaciones anuales coinciden (diferencia máx. {d:.6f} €)"
-                             if d <= TOLERANCIA_ABS else f"diferencia máxima de {d:,.2f} € entre silver y gold", d, "gold"))
+                             f"exportaciones e importaciones anuales coinciden (diferencia máx. {f'{d:.6f}'.replace('.', ',')} €)"
+                             if d <= TOLERANCIA_ABS else f"diferencia máxima de {f'{d:.2f}'.replace('.', ',')} € entre silver y gold", d, "gold"))
         n_ops = q(f"SELECT SUM(n_op_exportacion + n_op_importacion) FROM {gold}")
         checks.append(_check("gold_operaciones_cuadran", int(n_ops) == n_silver,
-                             f"{int(n_ops):,} operaciones en gold = {n_silver:,} en silver" if int(n_ops) == n_silver
-                             else f"gold tiene {int(n_ops):,} operaciones y silver {n_silver:,}", int(n_ops) - n_silver, "gold"))
+                             f"{_n(n_ops)} operaciones en gold = {_n(n_silver)} en silver" if int(n_ops) == n_silver
+                             else f"gold tiene {_n(n_ops)} operaciones y silver {_n(n_silver)}", int(n_ops) - n_silver, "gold"))
         dup = q(f"SELECT count(*) - count(DISTINCT (mes_inicio, pais_codigo, producto_codigo)) FROM {gold}")
         checks.append(_check("gold_clave_unica", dup == 0, "una fila por mes, país y producto" if dup == 0
-                             else f"{dup:,} claves repetidas", dup, "gold"))
+                             else f"{_n(dup)} claves repetidas", dup, "gold"))
         neg = q(f"SELECT count(*) FROM {gold} WHERE exportaciones_eur < 0 OR importaciones_eur < 0")
         checks.append(_check("gold_sin_negativos", neg == 0, "importes ≥ 0 en todos los hechos" if neg == 0
-                             else f"{neg:,} hechos con importes negativos", neg, "gold"))
+                             else f"{_n(neg)} hechos con importes negativos", neg, "gold"))
 
     ing = control.ingestas()
     if len(ing):

@@ -38,15 +38,20 @@ class Motor:
         self._lock = threading.Lock()
         self.consultas_ejecutadas = 0
         self.aciertos_cache = 0
+        self._vistas_listas = False
         self._crear_vistas()
 
     def _crear_vistas(self) -> None:
+        """Crea las vistas sobre gold en cuanto existen datos (el servidor puede arrancar antes de la carga)."""
+        if self._vistas_listas or not self.rutas.existe_gold():
+            return
         g = self.rutas.gold
         self.con.execute(
             f"CREATE OR REPLACE VIEW hechos_mensual AS SELECT * FROM "
             f"read_parquet('{self.rutas.hechos}/*/part.parquet', hive_partitioning=false)")
         for t in ("dim_pais", "dim_producto", "dim_mes"):
             self.con.execute(f"CREATE OR REPLACE VIEW {t} AS SELECT * FROM read_parquet('{g / (t + '.parquet')}')")
+        self._vistas_listas = True
 
     def version_datos(self) -> str:
         f = self.control.f_ingestas
@@ -56,10 +61,12 @@ class Motor:
         return f"{st.st_mtime_ns}:{st.st_size}"
 
     def datos_disponibles(self) -> bool:
-        return self.rutas.existe_gold()
+        self._crear_vistas()
+        return self._vistas_listas
 
     # ------------------------------------------------------------------ ejecución
     def ejecutar_sql(self, sql: str, *, usar_cache: bool = True) -> list[dict]:
+        self._crear_vistas()
         clave = (self.version_datos(), sql)
         if usar_cache:
             with self._lock:

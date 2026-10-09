@@ -9,8 +9,9 @@
 -- (comparación homogénea aunque el último año esté incompleto).
 -- Un año sin datos devuelve meses_con_datos = 0 e importes NULL; el primer año de la serie no tiene previo.
 WITH base AS (
-    SELECT h.mes_inicio, h.anio, h.mes, h.pais_codigo, c.pais, c.region,
-           h.producto_codigo, p.producto, p.subsector_codigo, p.subsector, p.sector_codigo, p.sector,
+    SELECT h.mes_inicio, h.anio, h.mes, h.pais_codigo, h.producto_codigo,
+           c.pais, c.region,
+           p.producto, p.subsector_codigo, p.subsector, p.sector_codigo, p.sector,
            h.exportaciones_eur, h.importaciones_eur, h.peso_exportado_kg, h.peso_importado_kg,
            h.unidades_exportadas, h.unidades_importadas, h.n_op_exportacion, h.n_op_importacion,
            -- una fila puede pertenecer a la vez al periodo actual y al previo (rangos de más de 12 meses)

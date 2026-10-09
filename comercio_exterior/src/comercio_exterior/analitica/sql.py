@@ -34,19 +34,21 @@ COLUMNAS_ORDENABLES_TABLA = {
 }
 
 _CTE_BASE = """base AS (
-    SELECT h.mes_inicio, h.anio, h.mes, h.pais_codigo, c.pais, c.region,
-           h.producto_codigo, p.producto, p.subsector_codigo, p.subsector, p.sector_codigo, p.sector,
+    SELECT h.mes_inicio, h.anio, h.mes, h.pais_codigo, h.producto_codigo,{cols_dim}
            h.exportaciones_eur, h.importaciones_eur, h.peso_exportado_kg, h.peso_importado_kg,
            h.unidades_exportadas, h.unidades_importadas, h.n_op_exportacion, h.n_op_importacion,
            -- una fila puede pertenecer a la vez al periodo actual y al previo (rangos de más de 12 meses)
            CASE WHEN h.mes_inicio >= DATE '{desde}' AND h.mes_inicio <= DATE '{hasta}' THEN 1 ELSE 0 END AS en_a,
            CASE WHEN h.mes_inicio >= DATE '{desde_previo}' AND h.mes_inicio <= DATE '{hasta_previo}' THEN 1 ELSE 0 END AS en_p
-    FROM {hechos_mensual} h
-    JOIN {dim_pais} c ON c.pais_codigo = h.pais_codigo
-    JOIN {dim_producto} p ON p.producto_codigo = h.producto_codigo
+    FROM {hechos_mensual} h{joins}
     WHERE {tiempo}
           {dims}
 )"""
+
+_COLS_PAIS = "\n           c.pais, c.region,"
+_COLS_PRODUCTO = "\n           p.producto, p.subsector_codigo, p.subsector, p.sector_codigo, p.sector,"
+_JOIN_PAIS = "\n    JOIN {dim_pais} c ON c.pais_codigo = h.pais_codigo"
+_JOIN_PRODUCTO = "\n    JOIN {dim_producto} p ON p.producto_codigo = h.producto_codigo"
 
 
 def _plantilla(nombre: str) -> str:
@@ -65,8 +67,18 @@ def renderizar(consulta: str, f: Filtros, *, dialecto: str = "duckdb", esquema: 
     tablas = {t: (t if dialecto == "duckdb" else f"{esquema}.{t}") for t in TABLAS}
     tipo_tiempo = {"serie_mensual": "series", "serie_anual": "series", "ranking": "anios"}.get(consulta, "ventanas")
     tiempo = {"series": f.tiempo_series, "anios": f.tiempo_anios, "ventanas": f.tiempo_ventanas}[tipo_tiempo]()
-    cte = _CTE_BASE.format(desde=f.desde, hasta=f.hasta, desde_previo=f.desde_previo, hasta_previo=f.hasta_previo,
-                           tiempo=tiempo, dims=f.predicados_dimension(), **tablas)
+    # En DuckDB solo se unen las dimensiones que la consulta usa (medido: ~1/3 del tiempo en las consultas
+    # de resumen y series). En la versión Databricks se mantienen ambas para poder activar cualquier filtro.
+    clave = params.get("clave")
+    usa_pais = dialecto == "databricks" or clave in ("pais_codigo", "region")
+    usa_prod = (dialecto == "databricks" or bool(f.sectores or f.subsectores)
+                or clave in ("producto_codigo", "sector_codigo", "subsector_codigo"))
+    cte = _CTE_BASE.format(
+        desde=f.desde, hasta=f.hasta, desde_previo=f.desde_previo, hasta_previo=f.hasta_previo, tiempo=tiempo,
+        dims=f.predicados_dimension(),
+        cols_dim=(_COLS_PAIS if usa_pais else "") + (_COLS_PRODUCTO if usa_prod else ""),
+        joins=(_JOIN_PAIS.format(**tablas) if usa_pais else "") + (_JOIN_PRODUCTO.format(**tablas) if usa_prod else ""),
+        **tablas)
     valores = dict(
         cte_base=cte, desde=f.desde, hasta=f.hasta, inicio_ext=f.inicio_ext_series,
         anio_desde=f.desde.year, anio_hasta=f.hasta.year, **tablas)

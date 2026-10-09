@@ -25,10 +25,17 @@ async function pedir(clave, ruta, params) {
   const ctl = new AbortController();
   estado.peticiones[clave] = ctl;
   const url = `${API}${ruta}${params ? "?" + params : ""}`;
-  let resp;
-  try { resp = await fetch(url, { signal: ctl.signal }); }
-  catch (e) { if (e.name === "AbortError") return null; avisar("No se pudo contactar con el servidor."); throw e; }
-  const cuerpo = await resp.json().catch(() => ({}));
+  let resp, cuerpo;
+  try {
+    resp = await fetch(url, { signal: ctl.signal });
+    cuerpo = await resp.json().catch((e) => { if (e.name === "AbortError") throw e; return {}; });
+  } catch (e) {
+    if (e.name === "AbortError") return null;
+    avisar("No se pudo contactar con el servidor.");
+    throw e;
+  }
+  // una respuesta que llega después de lanzar otra petición igual (o cancelada) no debe tocar la pantalla
+  if (ctl.signal.aborted || estado.peticiones[clave] !== ctl) return null;
   if (!resp.ok) {
     avisar(cuerpo.error?.mensaje || `Error ${resp.status}`);
     throw new Error(cuerpo.error?.mensaje || resp.status);
@@ -83,7 +90,8 @@ function leerUrl() {
 }
 
 /* ---------------------------------------------------------------- gráficos SVG */
-const W = 720;
+const anchoDe = (el) => Math.max(320, Math.round(el.clientWidth || 720));
+const etqEje = (v) => v === 0 ? "0" : Math.abs(v) >= 1e6 ? nf0.format(v / 1e6) + " M" : Math.abs(v) >= 1e3 ? nf0.format(v / 1e3) + " k" : nf0.format(v);
 function ticks(min, max, n = 5) {
   if (min === max) { max = min + 1; }
   const paso0 = (max - min) / n, mag = Math.pow(10, Math.floor(Math.log10(paso0)));
@@ -98,12 +106,12 @@ function graficoLineas(el, puntos, series) {
   // puntos: [{x:'2019-03', ...}], series: [{clave, color, nombre}]
   const valores = puntos.flatMap((p) => series.map((s) => p[s.clave])).filter((v) => v != null);
   if (!valores.length) return vacio(el);
-  const H = 250, m = { l: 62, r: 12, t: 14, b: 26 };
+  const W = anchoDe(el), H = 250, m = { l: 62, r: 12, t: 14, b: 26 };
   const ts = ticks(Math.min(0, ...valores), Math.max(...valores));
   const y0 = ts[0], y1 = ts[ts.length - 1];
   const X = (i) => m.l + (puntos.length === 1 ? (W - m.l - m.r) / 2 : i * (W - m.l - m.r) / (puntos.length - 1));
   const Y = (v) => H - m.b - (v - y0) / (y1 - y0 || 1) * (H - m.t - m.b);
-  let s = ts.map((t) => `<line x1="${m.l}" x2="${W - m.r}" y1="${Y(t)}" y2="${Y(t)}" stroke="currentColor" opacity=".12"/><text x="${m.l - 6}" y="${Y(t) + 4}" text-anchor="end">${fmtEur(t).replace(" €", "")}</text>`).join("");
+  let s = ts.map((t) => `<line x1="${m.l}" x2="${W - m.r}" y1="${Y(t)}" y2="${Y(t)}" stroke="currentColor" opacity=".12"/><text x="${m.l - 6}" y="${Y(t) + 4}" text-anchor="end">${etqEje(t)}</text>`).join("");
   puntos.forEach((p, i) => { if (p.x.endsWith("-01")) s += `<text x="${X(i)}" y="${H - 8}" text-anchor="middle">${p.x.slice(0, 4)}</text>`; });
   for (const se of series) {
     let d = "", abierto = false;
@@ -119,12 +127,12 @@ function graficoLineas(el, puntos, series) {
 function graficoBarrasVerticales(el, puntos, claveEtq, valorFn, colorFn, titulo, alto = 120) {
   const vals = puntos.map(valorFn);
   if (!vals.some((v) => v != null)) return vacio(el, "Sin datos de saldo.");
-  const m = { l: 62, r: 12, t: 10, b: 8 }, H = alto;
+  const W = anchoDe(el), m = { l: 62, r: 12, t: 10, b: 8 }, H = alto;
   const ts = ticks(Math.min(0, ...vals.filter((v) => v != null)), Math.max(0, ...vals.filter((v) => v != null)), 3);
   const y0 = ts[0], y1 = ts[ts.length - 1];
   const Y = (v) => H - m.b - (v - y0) / (y1 - y0 || 1) * (H - m.t - m.b);
   const bw = Math.max(1, (W - m.l - m.r) / puntos.length - 1);
-  let s = ts.map((t) => `<line x1="${m.l}" x2="${W - m.r}" y1="${Y(t)}" y2="${Y(t)}" stroke="currentColor" opacity="${t === 0 ? .4 : .1}"/><text x="${m.l - 6}" y="${Y(t) + 4}" text-anchor="end">${fmtEur(t).replace(" €", "")}</text>`).join("");
+  let s = ts.map((t) => `<line x1="${m.l}" x2="${W - m.r}" y1="${Y(t)}" y2="${Y(t)}" stroke="currentColor" opacity="${t === 0 ? .4 : .1}"/><text x="${m.l - 6}" y="${Y(t) + 4}" text-anchor="end">${etqEje(t)}</text>`).join("");
   puntos.forEach((p, i) => { const v = vals[i]; if (v == null) return;
     const x = m.l + i * (W - m.l - m.r) / puntos.length, ya = Y(Math.max(v, 0)), yb = Y(Math.min(v, 0));
     s += `<rect x="${x.toFixed(1)}" y="${ya.toFixed(1)}" width="${bw.toFixed(1)}" height="${Math.max(0.5, yb - ya).toFixed(1)}" fill="${colorFn(v)}"><title>${esc(p[claveEtq])} · ${titulo}: ${fmtEur(v)}</title></rect>`; });
@@ -135,12 +143,12 @@ function graficoBarrasVerticales(el, puntos, claveEtq, valorFn, colorFn, titulo,
 function graficoAnual(el, filas) {
   const datos = filas.filter((f) => f.exportaciones_eur != null || f.importaciones_eur != null);
   if (!datos.length) return vacio(el);
-  const H = 220, m = { l: 62, r: 10, t: 14, b: 26 };
+  const W = anchoDe(el), H = 220, m = { l: 62, r: 10, t: 14, b: 26 };
   const max = Math.max(...datos.flatMap((f) => [f.exportaciones_eur ?? 0, f.importaciones_eur ?? 0]));
   const ts = ticks(0, max, 4), top = ts[ts.length - 1];
   const Y = (v) => H - m.b - v / top * (H - m.t - m.b);
   const gw = (W - m.l - m.r) / filas.length;
-  let s = ts.map((t) => `<line x1="${m.l}" x2="${W - m.r}" y1="${Y(t)}" y2="${Y(t)}" stroke="currentColor" opacity=".12"/><text x="${m.l - 6}" y="${Y(t) + 4}" text-anchor="end">${fmtEur(t).replace(" €", "")}</text>`).join("");
+  let s = ts.map((t) => `<line x1="${m.l}" x2="${W - m.r}" y1="${Y(t)}" y2="${Y(t)}" stroke="currentColor" opacity=".12"/><text x="${m.l - 6}" y="${Y(t) + 4}" text-anchor="end">${etqEje(t)}</text>`).join("");
   filas.forEach((f, i) => {
     const x = m.l + i * gw, bw = gw * 0.34;
     [[f.exportaciones_eur, "var(--exp)", "Exportaciones", 0.12], [f.importaciones_eur, "var(--imp)", "Importaciones", 0.5]].forEach(([v, c, n, off]) => {
@@ -153,7 +161,7 @@ function graficoAnual(el, filas) {
 
 function graficoBarrasH(el, items, { etiqueta, valor, formato, color }) {
   if (!items.length) return vacio(el);
-  const fila = 26, m = { l: 190, r: 90, t: 6, b: 6 }, H = items.length * fila + m.t + m.b, ancho = 520;
+  const ancho = anchoDe(el), fila = 26, m = { l: 150, r: 95, t: 6, b: 6 }, H = items.length * fila + m.t + m.b;
   const vals = items.map(valor), min = Math.min(0, ...vals), max = Math.max(0, ...vals);
   const X = (v) => m.l + (v - min) / (max - min || 1) * (ancho - m.l - m.r), x0 = X(0);
   let s = `<line x1="${x0}" x2="${x0}" y1="0" y2="${H}" stroke="currentColor" opacity=".3"/>`;
@@ -170,7 +178,7 @@ function graficoBarrasH(el, items, { etiqueta, valor, formato, color }) {
 /* ---------------------------------------------------------------- vistas */
 function variacion(v) {
   if (v == null) return '<span class="var">sin comparación</span>';
-  return `<span class="var"><span class="${v >= 0 ? "sube" : "baja"}">${v >= 0 ? "▲" : "▼"} ${fmtPct(Math.abs(v))}</span> vs. año anterior</span>`;
+  return `<span class="var"><span class="${v >= 0 ? "sube" : "baja"}">${v >= 0 ? "▲" : "▼"} ${fmtPct(Math.abs(v))}</span> vs. mismo periodo del año anterior</span>`;
 }
 async function cargarResumen() {
   const cont = $("#vista-resumen");
@@ -189,7 +197,7 @@ async function cargarResumen() {
     $("#kpis").innerHTML = [
       ["exportaciones", "Exportaciones", fmtEur(d.exportaciones_eur), variacion(d.var_exportaciones_pct), ""],
       ["importaciones", "Importaciones", fmtEur(d.importaciones_eur), variacion(d.var_importaciones_pct), ""],
-      ["saldo", "Saldo comercial", fmtEur(d.saldo_eur), d.var_saldo_eur == null ? "" : `<span class="var">${d.var_saldo_eur >= 0 ? "▲" : "▼"} ${fmtEur(Math.abs(d.var_saldo_eur))} vs. año anterior</span>`, cls(d.saldo_eur)],
+      ["saldo", "Saldo comercial", fmtEur(d.saldo_eur), d.var_saldo_eur == null ? "" : `<span class="var">${d.var_saldo_eur >= 0 ? "▲" : "▼"} ${fmtEur(Math.abs(d.var_saldo_eur))} vs. mismo periodo del año anterior</span>`, cls(d.saldo_eur)],
       ["cobertura", "Tasa de cobertura", d.cobertura_pct == null ? "—" : fmtPct(d.cobertura_pct), '<span class="var">exportaciones / importaciones</span>', ""],
       ["operaciones", "Operaciones", fmtNum(d.n_operaciones), `<span class="var">${fmtNum(d.unidades)} uds · ${fmtNum((d.peso_kg ?? 0) / 1000)} t</span>`, ""],
     ].map(([id, e, v, sub, c]) => `<div class="kpi" data-testid="kpi-${id}"><div class="etq">${e}</div><div class="val ${c}">${v}</div><div class="var">${sub}</div></div>`).join("");
@@ -239,7 +247,7 @@ async function cargarTabla() {
   const rk = await pedir("rank", "/ranking", conExtra({ dimension: $("#rank-dim").value, n: 5 }));
   if (rk) {
     $("#tabla-ranking").innerHTML = `<thead><tr><th>Año</th><th>Pos.</th><th class="izq">Nombre</th><th>Comercio total</th><th>Cuota</th><th>Cambio</th></tr></thead><tbody>${
-      rk.datos.map((f) => `<tr><td>${f.anio}</td><td>${f.posicion}</td><td class="izq">${esc(f.nombre)}</td><td>${fmtEur(f.valor)}</td><td>${fmtPct(f.cuota_pct)}</td><td>${f.cambio_posicion == null ? "nuevo" : f.cambio_posicion > 0 ? `<span class="pos">▲ ${f.cambio_posicion}</span>` : f.cambio_posicion < 0 ? `<span class="neg">▼ ${-f.cambio_posicion}</span>` : "="}</td></tr>`).join("")}</tbody>`;
+      rk.datos.map((f) => `<tr><td>${f.anio}</td><td>${f.posicion}</td><td class="izq">${esc(f.nombre)}</td><td>${fmtEur(f.valor)}</td><td>${fmtPct(f.cuota_pct)}</td><td>${f.cambio_posicion == null ? (f.anio <= +estado.meta.rango.desde.slice(0, 4) ? "—" : "nuevo") : f.cambio_posicion > 0 ? `<span class="pos">▲ ${f.cambio_posicion}</span>` : f.cambio_posicion < 0 ? `<span class="neg">▼ ${-f.cambio_posicion}</span>` : "="}</td></tr>`).join("")}</tbody>`;
   }
 }
 
@@ -266,7 +274,7 @@ async function cargarRechazados() {
   const r = await pedir("rech", "/calidad/rechazados", p.toString());
   if (!r) return;
   $("#tabla-rechazados").innerHTML = `<thead><tr><th class="izq">Ingesta</th><th>Fila</th><th class="izq">Operación</th><th class="izq">Fecha</th><th class="izq">Flujo</th><th class="izq">País</th><th class="izq">Producto</th><th>Importe</th><th class="izq">Motivo</th></tr></thead><tbody>${
-    r.filas.map((f) => `<tr><td class="izq">${esc(f.ingesta_id)}</td><td>${f.fila_origen}</td><td class="izq">${esc(f.operacion_id)}</td><td class="izq">${esc(f.fecha)}</td><td class="izq">${esc(f.flujo)}</td><td class="izq">${esc(f.pais_codigo)}</td><td class="izq">${esc(f.producto_codigo)}</td><td>${f.importe_eur == null ? "—" : nf2.format(f.importe_eur)}</td><td class="izq">${insignia(false, f.motivo)}</td></tr>`).join("")}</tbody>`;
+    r.filas.map((f) => `<tr><td class="izq">${esc(f.ingesta_id)}</td><td>${f.fila_origen}</td><td class="izq">${esc(f.operacion_id)}</td><td class="izq">${esc(f.fecha)}</td><td class="izq">${esc(f.flujo)}</td><td class="izq">${esc(f.pais_codigo)}</td><td class="izq">${esc(f.producto_codigo)}</td><td>${f.importe_eur == null ? "—" : nf2.format(f.importe_eur)}</td><td class="izq"><span class="insignia neutro">${esc(f.motivo)}</span></td></tr>`).join("")}</tbody>`;
   $("#rech-info").textContent = `Página ${r.pagina} de ${r.paginas} · ${fmtNum(r.total)} rechazados`;
   $("#rech-ant").disabled = r.pagina <= 1; $("#rech-sig").disabled = r.pagina >= r.paginas;
 }
@@ -337,4 +345,9 @@ async function iniciar() {
   $("#tabla-ingestas").addEventListener("click", (e) => { const tr = e.target.closest("tr[data-id]"); if (tr) abrirIngesta(tr.dataset.id); });
   refrescar();
 }
+let anchoPrevio = window.innerWidth, temporizador;
+window.addEventListener("resize", () => {
+  clearTimeout(temporizador);
+  temporizador = setTimeout(() => { if (Math.abs(window.innerWidth - anchoPrevio) > 120) { anchoPrevio = window.innerWidth; if (estado.meta) refrescar(); } }, 300);
+});
 iniciar();

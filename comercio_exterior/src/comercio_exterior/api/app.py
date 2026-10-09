@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import csv
 import io
+import logging
 import os
 from enum import Enum
 from pathlib import Path
@@ -20,6 +21,7 @@ from ..lakehouse import calidad
 from ..lakehouse.control import Control
 from ..lakehouse.rutas import Rutas
 
+registro = logging.getLogger("comercio_exterior.api")
 ESTATICOS = Path(__file__).resolve().parents[1] / "web" / "static"
 TAMANO_MAX = 500
 
@@ -59,6 +61,15 @@ def _traducir(err: dict) -> dict:
     return {"campo": campo, "mensaje": msg}
 
 
+def _redondear(datos):
+    """Quita el ruido de coma flotante (p. ej. 227790061.04999998) sin tocar los cálculos del motor."""
+    if isinstance(datos, list):
+        return [_redondear(d) for d in datos]
+    if isinstance(datos, dict):
+        return {k: (round(v, 4) if isinstance(v, float) else v) for k, v in datos.items()}
+    return datos
+
+
 def _lista(valores: list[str] | None) -> list[str]:
     """Admite ?pais=ES&pais=FR y ?pais=ES,FR."""
     out: list[str] = []
@@ -92,9 +103,9 @@ def crear_app(raiz_lake: str | Path | None = None) -> FastAPI:
                       "; ".join(f"'{d['campo']}' {d['mensaje']}" for d in det), det)
 
     @app.exception_handler(Exception)
-    async def _h_inesperado(_: Request, exc: Exception):
-        return _error(500, "error_interno", "Se ha producido un error inesperado al procesar la solicitud.",
-                      [{"tipo": type(exc).__name__}])
+    async def _h_inesperado(request: Request, exc: Exception):
+        registro.exception("Error no controlado en %s", request.url.path, exc_info=exc)   # detalle solo en el log
+        return _error(500, "error_interno", "Se ha producido un error inesperado al procesar la solicitud.")
 
     # ---------------------------------------------------------------- dependencias
     def motor() -> Motor:
@@ -114,7 +125,7 @@ def crear_app(raiz_lake: str | Path | None = None) -> FastAPI:
         return Filtros.crear(desde, hasta, _lista(pais), _lista(producto), _lista(sector), _lista(subsector))
 
     def envoltorio(m: Motor, f: Filtros, datos, **extra) -> dict:
-        return {"filtros": f.como_dict(), "version_datos": m.version_datos(), **extra, "datos": datos}
+        return {"filtros": f.como_dict(), "version_datos": m.version_datos(), **extra, "datos": _redondear(datos)}
 
     # ---------------------------------------------------------------- API
     api = "/api/v1"
@@ -204,6 +215,7 @@ def crear_app(raiz_lake: str | Path | None = None) -> FastAPI:
             filas = m.contribucion(f, dimension.value, medida.value, n)
         else:
             filas = m.ranking(f, dimension.value, medida.value, n, sentido.value)
+        filas = _redondear(filas)
         buf = io.StringIO()
         if bom:
             buf.write("﻿")

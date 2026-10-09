@@ -263,15 +263,17 @@ class Lakehouse:
         existentes = [self.rutas.silver_periodo(p) / "part.parquet" for p in periodos
                       if (self.rutas.silver_periodo(p) / "part.parquet").exists()]
         cols = ", ".join(COLUMNAS_SILVER)
+        # Solo se razona sobre las operaciones que traen filas nuevas: el resto de silver no se toca.
         if existentes:
             lista = ", ".join(f"'{p}'" for p in existentes)
-            existente_sql = (f"SELECT {cols}, 'SILVER' AS origen FROM read_parquet([{lista}])")
-            con.execute(f"CREATE OR REPLACE TEMP TABLE existente AS {existente_sql}")
+            con.execute(f"""CREATE OR REPLACE TEMP TABLE existente AS
+                            SELECT {cols}, 'SILVER' AS origen FROM read_parquet([{lista}])
+                            WHERE operacion_id IN (SELECT operacion_id FROM validos)""")
         else:
             con.execute(f"CREATE OR REPLACE TEMP TABLE existente AS SELECT {cols}, 'SILVER' AS origen "
                         f"FROM validos WHERE false")
 
-        # 3) fusión: exactos → versión vigente
+        # 3) fusión: duplicados exactos → versión vigente
         con.execute(f"""
             CREATE OR REPLACE TEMP TABLE candidatos AS
             SELECT *, first_value(COALESCE(ingesta_id_primera, ingesta_id)) OVER (
@@ -293,7 +295,13 @@ class Lakehouse:
                    max(version) OVER (PARTITION BY operacion_id) AS ver_ganadora
             FROM c1 WHERE rn1 = 1
         """)
-        winners = f"SELECT {', '.join(c for c in COLUMNAS_SILVER if c != 'ingesta_id_primera')}, primera AS ingesta_id_primera FROM c2 WHERE rn2 = 1"
+        # filas que entran en silver (nuevas operaciones y versiones que sustituyen a las vigentes)
+        con.execute(f"""
+            CREATE OR REPLACE TEMP TABLE ganadores_nuevos AS
+            SELECT {', '.join(c for c in COLUMNAS_SILVER if c != 'ingesta_id_primera')},
+                   primera AS ingesta_id_primera
+            FROM c2 WHERE rn2 = 1 AND origen = 'NUEVO'
+        """)
         # descartes: duplicados exactos y versiones que pierden
         con.execute(f"""
             CREATE OR REPLACE TEMP TABLE descartes AS
@@ -313,25 +321,28 @@ class Lakehouse:
               FROM c2 WHERE rn2 > 1
             ) d
         """)
-        # el desglose por motivo de los descartes que nacen en esta ingesta
-        # (un descarte de origen SILVER es una versión que esta carga sustituye)
+        # (un descarte de origen SILVER es una versión vigente que esta carga sustituye)
         desc = dict(con.execute("SELECT motivo, count(*) FROM descartes GROUP BY motivo").fetchall())
         if desc:
             self._escribir_parquet_sql(con, "SELECT * FROM descartes", desc_dir / "part.parquet")
 
-        stats_sql = con.execute("""
-            SELECT
-              count(*) FILTER (WHERE origen = 'NUEVO' AND rn2 = 1 AND operacion_id NOT IN (SELECT operacion_id FROM existente)),
-              count(*) FILTER (WHERE origen = 'NUEVO' AND rn2 = 1 AND operacion_id IN (SELECT operacion_id FROM existente))
-            FROM c2""").fetchone()
+        nuevas, corr = con.execute("""
+            SELECT count(*) FILTER (WHERE operacion_id NOT IN (SELECT operacion_id FROM existente)),
+                   count(*) FILTER (WHERE operacion_id IN (SELECT operacion_id FROM existente))
+            FROM ganadores_nuevos""").fetchone()
 
-        # 4) reescritura de los periodos afectados (atómica por fichero)
-        for p in periodos:
+        # 4) solo se reescriben los periodos cuyo contenido cambia (los que reciben una fila ganadora)
+        cambiados = [r[0] for r in con.execute("SELECT DISTINCT periodo FROM ganadores_nuevos ORDER BY 1").fetchall()]
+        for p in cambiados:
+            fichero = self.rutas.silver_periodo(p) / "part.parquet"
+            previo = (f"SELECT {cols} FROM read_parquet('{fichero}') WHERE operacion_id NOT IN "
+                      f"(SELECT operacion_id FROM ganadores_nuevos WHERE periodo = '{p}') UNION ALL "
+                      if fichero.exists() else "")
             self._escribir_parquet_sql(
-                con, f"SELECT * FROM ({winners}) WHERE periodo = '{p}' ORDER BY fecha, operacion_id",
-                self.rutas.silver_periodo(p) / "part.parquet")
-        resumen.update(descartes_por_motivo=desc, nuevas_operaciones=int(stats_sql[0]),
-                       correcciones_aplicadas=int(stats_sql[1]), periodos_afectados=periodos)
+                con, f"SELECT * FROM ({previo} SELECT {cols} FROM ganadores_nuevos WHERE periodo = '{p}') "
+                     f"ORDER BY fecha, operacion_id", fichero)
+        resumen.update(descartes_por_motivo=desc, nuevas_operaciones=int(nuevas), correcciones_aplicadas=int(corr),
+                       periodos_afectados=cambiados)
         return resumen
 
     # ------------------------------------------------------------------ gold
